@@ -11,22 +11,39 @@ namespace LowRezJam2021
         private SpriteBatch _spriteBatch;
         private RenderTarget2D renderTarget;
         private SpriteFont font;
-        private Texture2D spaceTiles;
-        private float angle;
+        private Texture2D tiles;
+
         private bool pixelated;
+        private MouseState mouseState;
         private KeyboardState keyboardState;
+
+        private int drawScale;
+        private (int x, int y) drawMargin;
+        private Point mousePoint;
+        private Point viewOffset;
+
+        private MapChunk map;
+
+        private ParticleSet particles;
 
         public Game1()
         {
             _graphics = new GraphicsDeviceManager(this);
+
             Content.RootDirectory = "Content";
             Window.AllowUserResizing = true;
+            
             IsMouseVisible = true;
         }
 
         protected override void Initialize()
         {
-            // TODO: Add your initialization logic here
+            _graphics.PreferredBackBufferWidth = 640;
+            _graphics.PreferredBackBufferHeight = 640;
+            _graphics.ApplyChanges();
+
+            particles = new ParticleSet(1024, 1.0f);
+            map = new MapChunk();
 
             base.Initialize();
         }
@@ -36,7 +53,7 @@ namespace LowRezJam2021
             _spriteBatch = new SpriteBatch(GraphicsDevice);
             font = Content.Load<SpriteFont>("Font");
             renderTarget = new RenderTarget2D(GraphicsDevice, 64, 64);
-            spaceTiles = Content.Load<Texture2D>("SpaceTiles");
+            tiles = Content.Load<Texture2D>("SpaceTiles");
         }
 
         protected override void Update(GameTime gameTime)
@@ -44,18 +61,45 @@ namespace LowRezJam2021
             if (GamePad.GetState(PlayerIndex.One).Buttons.Back == ButtonState.Pressed || Keyboard.GetState().IsKeyDown(Keys.Escape))
                 Exit();
 
-            var mouseState = Mouse.GetState();
+            var mouseStateLast = mouseState;
+            mouseState = Mouse.GetState();
             var keyboardStateLast = keyboardState;
             keyboardState = Keyboard.GetState();
-
-            angle = MathF.Atan2(mouseState.Y - Window.ClientBounds.Height / 2, mouseState.X - Window.ClientBounds.Width / 2);
-
-            if (keyboardState.IsKeyDown(Keys.F2) && keyboardStateLast.IsKeyUp(Keys.F2))
+            
+            if (wasKeyJustPressed(Keys.W, keyboardStateLast))
             {
-                pixelated = !pixelated;
+                viewOffset.Y--;
+            }
+            if (wasKeyJustPressed(Keys.A, keyboardStateLast))
+            {
+                viewOffset.X--;
+            }
+            if (wasKeyJustPressed(Keys.S, keyboardStateLast))
+            {
+                viewOffset.Y++;
+            }
+            if (wasKeyJustPressed(Keys.D, keyboardStateLast))
+            {
+                viewOffset.X++;
+            }
+
+            mousePoint = new Point((int)MathF.Floor((mouseState.X - drawMargin.x) / (float)drawScale / 8.0f) + viewOffset.X, (int)MathF.Floor((mouseState.Y - drawMargin.y) / (float)drawScale / 8.0f) + viewOffset.Y);
+
+            if (mouseState.LeftButton == ButtonState.Pressed && mouseStateLast.LeftButton == ButtonState.Released)
+            {
+                if (mousePoint.X >= 0 && mousePoint.Y >= 0 && mousePoint.X <= 256 && mousePoint.Y <= 256)
+                {
+                    var tile = map[mousePoint.X, mousePoint.Y];
+                    tile.Road = true;
+                }
             }
 
             base.Update(gameTime);
+        }
+
+        private bool wasKeyJustPressed(Keys key, KeyboardState last)
+        {
+            return keyboardState.IsKeyDown(key) && last.IsKeyUp(key);
         }
 
         protected override void Draw(GameTime gameTime)
@@ -64,89 +108,122 @@ namespace LowRezJam2021
             GraphicsDevice.Clear(Color.Black);
             _spriteBatch.Begin(samplerState: pixelated ? SamplerState.PointClamp : SamplerState.AnisotropicClamp);
 
+            /*var now = (float)gameTime.TotalGameTime.TotalSeconds;
+            particles.Scan(now, p =>
+            {
+                _spriteBatch.Draw(tiles, p.Position + p.Velocity * (now - p.Created), new Rectangle(1, 1, 1, 1), Color.Cyan);
+            });
 
             _spriteBatch.DrawString(font, "LowRezJam2021!!!", new Vector2(5, 5), Color.Teal);
+            */
 
-            _spriteBatch.Draw(spaceTiles, new Vector2(32, 32), new Rectangle(0, 0, 8, 8), Color.White, angle, new Vector2(4, 4), 1.0f, SpriteEffects.None, 0f);
+            int tileSize = 8;
+            int visibleTiles = 64 / tileSize;
+            for (int dy = 0; dy < visibleTiles; dy++)
+            {
+                for (int dx = 0; dx < visibleTiles; dx++)
+                {
+                    int x = dx + viewOffset.X;
+                    int y = dy + viewOffset.Y;
+
+                    var tile = map[x, y];
+                    if (tile == null)
+                        continue;
+
+                    var dest = new Rectangle(dx * tileSize, dy * tileSize, tileSize, tileSize);
+
+                    _spriteBatch.Draw(tiles, dest, new Rectangle(0, 0, 8, 8), Color.Green);
+
+                    if (tile.Road)
+                    {
+                        var tileIndex = 8;
+                        for (int i = 0; i < 4; i++)
+                        {
+                            var pt = new Point(x + offset[i].X, y + offset[i].Y);
+                            if (pt.X < 0 || pt.Y < 0 || pt.X >= 256 || pt.Y >=256)
+                            {
+                                continue;
+                            }
+                            var neighbor = map[pt.X, pt.Y];
+                            if (neighbor.Road)
+                            {
+                                tileIndex += 1 << i;
+                            }
+                        }
+
+                        var src = new Rectangle(tileIndex % 8 * 8, tileIndex / 8 * 8, 8, 8);
+                        _spriteBatch.Draw(tiles, dest, src, Color.White);
+                    }
+
+                }
+            }
+
+            _spriteBatch.Draw(tiles, new Rectangle((mousePoint.X - viewOffset.X) * tileSize, (mousePoint.Y - viewOffset.Y) * tileSize, tileSize, tileSize), new Rectangle(16, 0, 8, 8), Color.Silver);
 
             _spriteBatch.End();
 
-            int scale = (int)Math.Floor(Math.Min(Window.ClientBounds.Width, Window.ClientBounds.Height) / 64.0f);
-            var dest = 64 * scale;
-            var margin = (x: (Window.ClientBounds.Width - dest) / 2, y: (Window.ClientBounds.Height - dest) / 2);
+            // 
+            drawScale = (int)Math.Floor(Math.Min(Window.ClientBounds.Width, Window.ClientBounds.Height) / 64.0f);
+            var destSize = 64 * drawScale;
+            drawMargin = (x: (Window.ClientBounds.Width - destSize) / 2, y: (Window.ClientBounds.Height - destSize) / 2);
             GraphicsDevice.SetRenderTarget(null);
             _spriteBatch.Begin(samplerState: SamplerState.PointClamp);
-            _spriteBatch.Draw(renderTarget, new Rectangle(margin.x, margin.y, dest, dest), Color.White);
+            _spriteBatch.Draw(renderTarget, new Rectangle(drawMargin.x, drawMargin.y, destSize, destSize), Color.White);
             _spriteBatch.End();
 
             base.Draw(gameTime);
         }
-    }
 
-    public class Particle
-    {
-        public Color StartColor;
-        public Color EndColor;
-        public Vector2 Position;
-        public Vector2 Velocity;
-        public float Created;
-    }
-
-    public class RingBuffer<T> where T : new()
-    {
-        T[] items;
-        int nextFree;
-
-        public RingBuffer(int count)
+        private Point[] offset = new Point[]
         {
-            items = new T[count];
+            new Point(1,0),
+            new Point(0, 1),
+            new Point(-1, 0),
+            new Point(0, -1)
+        };
+    }
 
-            for (int i = 0; i < count; i++)
+    public class MapChunk
+    {
+        MapTile[,] tiles;
+
+        public MapTile this[int x, int y]
+        {
+            get
             {
-                items[i] = new T();
+                if (x < 0 || y < 0 || x >= 256 || y >= 256)
+                    return null;
+
+                return tiles[x, y];
             }
         }
 
-        protected void Add(Action<T> change)
+        public MapChunk()
         {
-            change(items[nextFree]);
-            nextFree = (nextFree + 1) % items.Length;
-        }
-    }
+            tiles = new MapTile[256, 256];
 
-    public class ParticleSet : RingBuffer<Particle>
-    {
-        int minScanIndex;
-        float currentTime;
-        float maxScanTime;
-
-        public ParticleSet(int count, float lifeTime)
-            : base(count)
-        {
-            LifeTime = lifeTime;
-        }
-
-        public float LifeTime { get; }
-
-        public void Add(Action<Particle> change)
-        {
-            base.Add(n =>
+            for (int x =0; x < tiles.GetLength(0); x++)
             {
-                change(n);
-                n.Created = currentTime;
-            });
+                for (int y =0; y < tiles.GetLength(1); y++)
+                {
+                    tiles[x, y] = new MapTile
+                    {
+                        Location = new Point(x, y)
+                    };
 
-            maxScanTime = currentTime + LifeTime;
-        }
-
-        public void Scan(float time)
-        {
-            currentTime = time;
-
-            while (true)
-            {
-
+                }
             }
+
         }
+
+
     }
+
+    public class MapTile
+    {
+        public Point Location { get; set; }
+
+        public bool Road { get; set; }
+    }
+
 }
